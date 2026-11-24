@@ -34,7 +34,7 @@ public final class FreetalkNNTPServer implements Runnable {
 	/** Comma-separated list of hosts to accept connections from. */
 	private final String mAllowedHosts;
 
-	private NetworkInterface mInterface;
+	private volatile NetworkInterface mInterface;
 	
 	private Thread mThread;
 	private volatile boolean mIsRunning;
@@ -83,6 +83,18 @@ public final class FreetalkNNTPServer implements Runnable {
 		
 		mIsRunning = false;
 		
+		// NetworkInterface.accept() ignores both Thread.interrupt() and the SO_TIMEOUT so we must close
+		// it for run() to wake up.
+		// If it is null then run() has not created it yet and will notice mIsRunning == false afterwards.
+		final NetworkInterface networkInterface = mInterface;
+		if(networkInterface != null) {
+			try {
+				networkInterface.close();
+			} catch(IOException e) {
+				Logger.error(this, "Closing the NetworkInterface failed", e);
+			}
+		}
+		
 		synchronized(this) {
 			while(mThread != null) {
 				try {
@@ -107,18 +119,20 @@ public final class FreetalkNNTPServer implements Runnable {
 		
 		try {
 			mInterface = NetworkInterface.create(mPort, mBindTo, mAllowedHosts, mFreetalk.getPluginRespirator().getNode().executor, true);
-			/* TODO: NetworkInterface.accept() currently does not support being interrupted by Thread.interrupt(),
-			 * shutdown works by timeout. This sucks and should be changed. As long as it is still like that,
-			 * we have to use a low timeout. */
-			mInterface.setSoTimeout(1000);
 			while (mIsRunning) {
 				final Socket clientSocket = mInterface.accept();
-				if(clientSocket != null) { /* null is returned on timeout */
-					try {
-						acceptConnection(clientSocket);
-					} catch(SocketException e) {
-						Logger.error(this, "Accepting connection failed.", e);
-					}
+				if(clientSocket == null) {
+					// terminate() has closed the interface, or binding has failed for all addresses.
+					// In the latter case accept() doesn't block so we must not call it again.
+					if(mIsRunning)
+						Logger.error(this, "NNTP server is not bound to any address, exiting: " + mBindTo + " port " + mPort);
+					break;
+				}
+				
+				try {
+					acceptConnection(clientSocket);
+				} catch(SocketException e) {
+					Logger.error(this, "Accepting connection failed.", e);
 				}
 				
 				garbageCollectDisconnectedHandlers();

@@ -5,22 +5,30 @@ package plugins.Freetalk.WoT;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
+import plugins.Freetalk.Configuration;
 import plugins.Freetalk.Freetalk;
 import plugins.Freetalk.Identity;
 import plugins.Freetalk.IdentityManager;
+import plugins.Freetalk.Message;
 import plugins.Freetalk.MessageManager;
+import plugins.Freetalk.MessageURI;
 import plugins.Freetalk.OwnIdentity;
+import plugins.Freetalk.OwnMessage;
 import plugins.Freetalk.Persistent;
 import plugins.Freetalk.PluginTalkerBlocking;
 import plugins.Freetalk.exceptions.DuplicateIdentityException;
 import plugins.Freetalk.exceptions.InvalidParameterException;
 import plugins.Freetalk.exceptions.NoSuchIdentityException;
+import plugins.Freetalk.exceptions.NoSuchMessageException;
 import plugins.Freetalk.exceptions.NotInTrustTreeException;
 import plugins.Freetalk.exceptions.NotTrustedException;
 import plugins.Freetalk.exceptions.WoTDisconnectedException;
@@ -67,6 +75,29 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 	/** The minimal amount of time between fetching own identities */
 	private static final int MINIMAL_OWN_IDENTITY_FETCH_DELAY = 1000;
 	
+	/** The minimal amount of time between searching for unlinked identities, see {@link #setFetchUnlinkedIdentities(boolean)} */
+	private static final int MINIMAL_UNLINKED_IDENTITY_SEARCH_DELAY = Freetalk.FAST_DEBUG_MODE ? (60 * 1000) : (60 * 60 * 1000);
+	
+	/** The maximal amount of unlinked identities, see {@link #setFetchUnlinkedIdentities(boolean)} */
+	protected static final int MAXIMAL_UNLINKED_IDENTITY_COUNT = 500;
+	
+	/** The maximal amount of candidates for being an unlinked identity which we ask WoT about per search. Each needs a FCP message. */
+	private static final int MAXIMAL_UNLINKED_IDENTITY_CHECKS = 200;
+	
+	/** Larger message list indices are considered as bogus. */
+	private static final long MAXIMAL_UNLINKED_MESSAGE_LIST_INDEX = 1000 * 1000;
+	
+	/** We cannot know the nickname of unlinked identities, it is only contained in data which WoT downloads. */
+	protected static final String UNLINKED_IDENTITY_NICKNAME = "Unknown";
+	
+	/**
+	 * Cache of {@link Configuration#FETCH_UNLINKED_IDENTITIES}.
+	 * Cached because it is needed while the transaction lock is held, and the Configuration is locked before the transaction lock elsewhere.
+	 */
+	private volatile boolean mFetchUnlinkedIdentities = false;
+	
+	private long mLastUnlinkedIdentitySearchTime = 0;
+	
 	private boolean mConnectedToWoT = false;
 	
 	private boolean mIdentityFetchInProgress = false;
@@ -112,6 +143,7 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 		
 		mTicker = new TrivialTicker(myExecutor);
 		mRandom = mFreetalk.getPluginRespirator().getNode().fastWeakRandom;
+		mFetchUnlinkedIdentities = mFreetalk.getConfig().getBoolean(Configuration.FETCH_UNLINKED_IDENTITIES);
 	}
 	
 	/**
@@ -856,6 +888,10 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 						synchronized(id) {
 						synchronized(Persistent.transactionLock(db)) {
 							try {
+								if(id.isUnlinked()) {
+									id.markAsLinked(nickname);
+									mShortestUniqueNicknameCacheNeedsUpdate = true;
+								}
 								id.setLastReceivedFromWoT(fetchID);
 								id.checkedCommit(this);
 							}
@@ -900,6 +936,242 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 		Logger.normal(this, "parseIdentities(bOwnIdentities==" + bOwnIdentities + " received " + idx + " identities. Ignored " + ignoredCount + "; New: " + newCount );
 	}
 
+	public static int getMaximalUnlinkedIdentityCount() {
+		return MAXIMAL_UNLINKED_IDENTITY_COUNT;
+	}
+	
+	public boolean getFetchUnlinkedIdentities() {
+		return mFetchUnlinkedIdentities;
+	}
+	
+	/**
+	 * Sets whether unlinked identities shall be fetched.
+	 * 
+	 * Unlinked identities are authors which WoT does not give us, typically because they stopped using Freenet long ago. As WoT does not know them, the only
+	 * way to discover them is that a message of a regular author refers to one of their messages as its thread or parent: The reference contains the URI of
+	 * the message list and thereby the key of the author.
+	 * 
+	 * As there is no trust value which could be used for detecting spam:
+	 * - this is disabled by default.
+	 * - identities which have a negative score are not accepted.
+	 * - references by messages of unlinked identities do not count. Otherwise a single one could make us fetch any amount of them.
+	 * - their amount is limited to {@link #MAXIMAL_UNLINKED_IDENTITY_COUNT}.
+	 * 
+	 * If this is disabled, unlinked identities and their messages will be deleted by the next garbage collection.
+	 * 
+	 * This does not store the value. You have to set {@link Configuration#FETCH_UNLINKED_IDENTITIES} as well.
+	 */
+	public void setFetchUnlinkedIdentities(boolean enabled) {
+		final boolean wasEnabled = mFetchUnlinkedIdentities;
+		mFetchUnlinkedIdentities = enabled;
+		
+		if(enabled && !wasEnabled) {
+			synchronized(this) {
+				mLastUnlinkedIdentitySearchTime = 0; // Search at the next iteration
+			}
+		}
+	}
+	
+	protected synchronized List<WoTIdentity> getUnlinkedIdentities() {
+		final Query q = db.query();
+		q.constrain(WoTIdentity.class);
+		q.descend("mIsUnlinked").constrain(true);
+		return new ArrayList<WoTIdentity>(new Persistent.InitializingObjectSet<WoTIdentity>(mFreetalk, q));
+	}
+	
+	/**
+	 * Searches all messages of regular identities for references to messages of identities which we do not know.
+	 * 
+	 * @return Keys = IDs of the identities, values = the URI of the known message list which has the highest index.
+	 */
+	protected Map<String, FreenetURI> getUnlinkedIdentityCandidates() {
+		final LinkedHashMap<String, FreenetURI> result = new LinkedHashMap<String, FreenetURI>();
+		final MessageManager messageManager = mFreetalk.getMessageManager();
+		
+		synchronized(this) {
+		synchronized(messageManager) {
+			final HashSet<String> knownIDs = new HashSet<String>();
+			for(final WoTIdentity identity : getAllIdentities())
+				knownIDs.add(identity.getID());
+			
+			final Query q = db.query();
+			q.constrain(Message.class);
+			q.constrain(OwnMessage.class).not();
+			
+			for(final Message message : new Persistent.InitializingObjectSet<Message>(mFreetalk, q)) {
+				if(((WoTIdentity)message.getAuthor()).isUnlinked())
+					continue;
+				
+				try {
+					addUnlinkedIdentityCandidate(result, knownIDs, message.getThreadURI());
+				} catch(NoSuchMessageException e) {}
+				
+				try {
+					addUnlinkedIdentityCandidate(result, knownIDs, message.getParentURI());
+				} catch(NoSuchMessageException e) {}
+			}
+		}
+		}
+		
+		return result;
+	}
+	
+	private static void addUnlinkedIdentityCandidate(Map<String, FreenetURI> candidates, HashSet<String> knownIDs, MessageURI messageURI) {
+		final FreenetURI sskURI = messageURI.getFreenetURI();
+		final String id = WoTIdentity.getIDFromURI(sskURI);
+		
+		if(knownIDs.contains(id))
+			return;
+		
+		// The URI was specified by a remote author so it can contain anything.
+		final FreenetURI uri;
+		try {
+			uri = sskURI.uskForSSK();
+			if(!uri.getDocName().equals(WoTMessageList.assembleURI(uri, 0).getDocName()))
+				return;
+		} catch(RuntimeException e) { // IllegalStateException: No edition; NumberFormatException: Edition too large
+			return;
+		}
+		
+		if(uri.getSuggestedEdition() < 0 || uri.getSuggestedEdition() > MAXIMAL_UNLINKED_MESSAGE_LIST_INDEX)
+			return;
+		
+		final FreenetURI existing = candidates.get(id);
+		if(existing == null || existing.getSuggestedEdition() < uri.getSuggestedEdition())
+			candidates.put(id, uri);
+	}
+	
+	/**
+	 * Asks WoT whether the given identity may be fetched as unlinked identity.
+	 * That is the case if at least one own identity has no score for it, or a score which is not negative.
+	 * 
+	 * @throws Exception If WoT could not be asked.
+	 */
+	private boolean isAcceptableAsUnlinkedIdentity(List<String> ownIdentityIDs, String identityID) throws Exception {
+		for(final String ownIdentityID : ownIdentityIDs) {
+			final SimpleFieldSet sfs = new SimpleFieldSet(true);
+			sfs.putOverwrite("Message", "GetIdentity");
+			sfs.putOverwrite("Truster", ownIdentityID);
+			sfs.putOverwrite("Identity", identityID);
+			
+			final String score;
+			try {
+				score = sendFCPMessageBlocking(sfs, null, "Identity").params.get("Score");
+			} catch(NoSuchIdentityException e) {
+				return true; // Not known by WoT.
+			}
+			
+			if(score == null || score.equals("null") || Integer.parseInt(score) >= 0)
+				return true;
+		}
+		
+		return false;
+	}
+	
+	/**
+	 * Deletes the unlinked identities which have received a negative score meanwhile, and adds new ones.
+	 * No locks may be held when calling this because it waits for many replies of WoT.
+	 * 
+	 * @see #setFetchUnlinkedIdentities(boolean)
+	 */
+	private void searchUnlinkedIdentities() throws Exception {
+		if(!mFetchUnlinkedIdentities)
+			return;
+		
+		final List<String> ownIdentityIDs = new ArrayList<String>();
+		final List<String> unlinkedIDs = new ArrayList<String>();
+		
+		synchronized(this) {
+			final long now = CurrentTimeUTC.getInMillis();
+			if((now - mLastUnlinkedIdentitySearchTime) < MINIMAL_UNLINKED_IDENTITY_SEARCH_DELAY)
+				return;
+			
+			mLastUnlinkedIdentitySearchTime = now;
+			
+			final Query q = db.query();
+			q.constrain(WoTOwnIdentity.class);
+			for(final WoTOwnIdentity own : new Persistent.InitializingObjectSet<WoTOwnIdentity>(mFreetalk, q))
+				ownIdentityIDs.add(own.getID());
+			
+			for(final WoTIdentity identity : getUnlinkedIdentities())
+				unlinkedIDs.add(identity.getID());
+		}
+		
+		if(ownIdentityIDs.isEmpty())
+			return;
+		
+		int count = 0;
+		for(final String id : unlinkedIDs) {
+			if(isAcceptableAsUnlinkedIdentity(ownIdentityIDs, id)) {
+				++count;
+				continue;
+			}
+			
+			synchronized(this) {
+				try {
+					final WoTIdentity identity = getIdentity(id);
+					if(identity.isUnlinked())
+						deleteIdentity(identity, mFreetalk.getMessageManager(), mFreetalk.getTaskManager());
+				} catch(NoSuchIdentityException e) {}
+			}
+		}
+		
+		// Candidates which are refused will be refused at the next search as well, so start at a random one to ensure that each gets its turn.
+		final List<Map.Entry<String, FreenetURI>> candidates =
+			new ArrayList<Map.Entry<String, FreenetURI>>(getUnlinkedIdentityCandidates().entrySet());
+		Collections.shuffle(candidates, mRandom);
+		
+		int checks = 0;
+		int newCount = 0;
+		for(final Map.Entry<String, FreenetURI> candidate : candidates) {
+			if(count >= MAXIMAL_UNLINKED_IDENTITY_COUNT || checks >= MAXIMAL_UNLINKED_IDENTITY_CHECKS)
+				break;
+			
+			++checks;
+			if(isAcceptableAsUnlinkedIdentity(ownIdentityIDs, candidate.getKey()) && importUnlinkedIdentity(candidate.getValue())) {
+				++count;
+				++newCount;
+			}
+		}
+		
+		Logger.normal(this, "searchUnlinkedIdentities(): Candidates: " + candidates.size() + "; checked: " + checks + "; new: " + newCount
+				+ "; total: " + count);
+	}
+	
+	/**
+	 * @param messageListURI The USK URI of a message list of the identity.
+	 * @return False if the identity exists already.
+	 */
+	protected synchronized boolean importUnlinkedIdentity(FreenetURI messageListURI) {
+		final String id = WoTIdentity.getIDFromURI(messageListURI);
+		
+		try {
+			getIdentity(id);
+			return false;
+		} catch(NoSuchIdentityException e) {}
+		
+		synchronized(Persistent.transactionLock(db)) {
+			try {
+				// Same as what WoT would return
+				final FreenetURI requestURI = messageListURI.setDocName(Freetalk.WEB_OF_TRUST_NAME).setSuggestedEdition(0).setMetaString(null);
+				
+				final WoTIdentity identity = new WoTIdentity(id, requestURI, UNLINKED_IDENTITY_NICKNAME);
+				identity.initializeTransient(mFreetalk);
+				identity.markAsUnlinked(messageListURI.getSuggestedEdition());
+				identity.storeWithoutCommit();
+				
+				onNewIdentityAdded(identity);
+				
+				identity.checkedCommit(this);
+				Logger.normal(this, "Imported unlinked identity: " + identity);
+			} catch(RuntimeException e) {
+				Persistent.checkedRollbackAndThrow(db, this, e);
+			}
+		}
+		
+		return true;
+	}
+
 	private void garbageCollectIdentities() {
 		garbageCollectIdentities(true);
 		garbageCollectIdentities(false);
@@ -939,6 +1211,11 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 
 			for(WoTIdentity identity : result) {
 				identity.initializeTransient(mFreetalk);
+				
+				// Those are not received from WoT. If they are not wanted anymore searchUnlinkedIdentities() deletes them.
+				if(identity.isUnlinked() && mFetchUnlinkedIdentities)
+					continue;
+				
 				if(logDEBUG) Logger.debug(this, "Garbage collecting identity " + identity);
 				deleteIdentity(identity, messageManager, taskManager);
 			}
@@ -1010,6 +1287,12 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 					garbageCollectIdentities();
 				} catch (Exception e) {
 					Logger.error(this, "Fetching identities failed.", e);
+				}
+				
+				try {
+					searchUnlinkedIdentities();
+				} catch(Exception e) {
+					Logger.error(this, "Searching unlinked identities failed.", e);
 				}
 			}
 		} finally {

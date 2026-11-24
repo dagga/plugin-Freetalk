@@ -36,6 +36,7 @@ public class SettingsPage extends WebPageImpl {
         if (mRequest.isPartSet("submit") && mRequest.getMethod().equals("POST")) {
             
             boolean enableNntpServer = mRequest.getPartAsStringFailsafe("EnableNntpServer", 4).equals("true");
+            boolean fetchUnlinkedIdentities = mRequest.getPartAsStringFailsafe("FetchUnlinkedIdentities", 4).equals("true");
             String nntpServerBindTo = mRequest.getPartAsStringFailsafe("nntpServerBindTo", 1024);
 			if ("127.0.0.1".equals(nntpServerBindTo)) {
 				nntpServerBindTo = null;
@@ -48,8 +49,10 @@ public class SettingsPage extends WebPageImpl {
                 mFreetalk.getConfig().set(Configuration.NNTP_SERVER_ENABLED, enableNntpServer);
                 mFreetalk.getConfig().set(Configuration.NNTP_SERVER_BINDTO, nntpServerBindTo);
                 mFreetalk.getConfig().set(Configuration.NNTP_SERVER_ALLOWED_HOSTS, nntpServerAllowedHosts);
+                mFreetalk.getConfig().set(Configuration.FETCH_UNLINKED_IDENTITIES, fetchUnlinkedIdentities);
                 mFreetalk.getConfig().storeAndCommit();
             }
+            mFreetalk.getIdentityManager().setFetchUnlinkedIdentities(fetchUnlinkedIdentities);
             
             boolean autoSubscribeToNewBoards = mRequest.getPartAsStringFailsafe("AutoSubscribeToNewBoards", 4).equals("true");
             
@@ -141,6 +144,20 @@ public class SettingsPage extends WebPageImpl {
         HTMLNode list = formNode.addChild("ul", "class", "config");
         HTMLNode item = list.addChild("li");
         
+        /* *** Fetch unlinked identities ********************************************* */
+
+        item.addChild("span", new String[]{ "class", "title", "style" },
+                new String[]{ "configshortdesc", booleanDefaultString(false), "cursor: help;" })
+                .addChild("#", l10n().getString("SettingsPage.GlobalSettings.FetchUnlinkedIdentities.Short"));
+        
+        item.addChild("span", "class", "config");
+        item.addChild(addBooleanComboBox(mFreetalk.getConfig().getBoolean(Configuration.FETCH_UNLINKED_IDENTITIES), "FetchUnlinkedIdentities", false));
+        
+        item.addChild("span", "class", "configlongdesc").addChild("#", l10n().getString("SettingsPage.GlobalSettings.FetchUnlinkedIdentities.Long",
+                "limit", Integer.toString(WoTIdentityManager.getMaximalUnlinkedIdentityCount())));
+
+        item = list.addChild("li");
+
         /* *** NNTP Server enabled ********************************************* */
         
         item.addChild("span", new String[]{ "class", "title", "style" },

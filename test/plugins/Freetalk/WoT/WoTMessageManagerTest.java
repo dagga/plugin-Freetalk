@@ -5,12 +5,15 @@ package plugins.Freetalk.WoT;
 
 import java.net.MalformedURLException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -462,6 +465,95 @@ public class WoTMessageManagerTest extends DatabaseBasedTest {
 		assertEquals(expected, new HashSet<String>(result));
 		assertEquals(result, getReplyIDs(thread));
 		assertTrue(result.indexOf(last.getID()) < result.indexOf(child.getID()));
+	}
+	
+	/** @return The request URI of an identity which is not stored in the database. */
+	private FreenetURI getUnknownIdentityURI(int number) {
+		final byte[] routingKey = mOwnIdentities[0].getRequestURI().getRoutingKey().clone();
+		routingKey[0] = (byte)number;
+		routingKey[1] = 0;
+		final FreenetURI uri = mOwnIdentities[0].getRequestURI();
+		return new FreenetURI("SSK", "WoT", routingKey, uri.getCryptoKey(), uri.getExtra());
+	}
+	
+	private WoTMessageURI getUnknownMessageURI(FreenetURI identityURI, String docName) throws MalformedURLException {
+		final WoTMessageURI uri = new WoTMessageURI(identityURI.setDocName(docName) + "#" + UUID.randomUUID());
+		uri.initializeTransient(mFreetalk);
+		return uri;
+	}
+	
+	/** See {@link WoTIdentityManager#setFetchUnlinkedIdentities(boolean)} */
+	public void testUnlinkedIdentities() throws Exception {
+		final WoTIdentityManager identityManager = mFreetalk.getIdentityManager();
+		final FreenetURI[] unknown = new FreenetURI[6];
+		for(int i = 0; i < unknown.length; ++i)
+			unknown[i] = getUnknownIdentityURI(i + 1);
+		
+		assertFalse("Must be disabled by default", identityManager.getFetchUnlinkedIdentities());
+		
+		final String list = "Freetalk|MessageList-";
+		final WoTMessageURI thread = getUnknownMessageURI(unknown[0], list + 3);
+		final WoTMessageURI[] parents = new WoTMessageURI[] {
+			getUnknownMessageURI(unknown[0], list + 7), // Higher edition of known candidate
+			getUnknownMessageURI(unknown[0], list + 5), // Lower edition
+			getUnknownMessageURI(unknown[1], list + 0),
+			getUnknownMessageURI(unknown[2], "Freetalk|Other-1"), // Not a message list
+			getUnknownMessageURI(unknown[3], "WebOfTrust"), // No edition
+			getUnknownMessageURI(unknown[4], list + Long.MAX_VALUE), // Bogus edition
+			getUnknownMessageURI(unknown[5], list + "99999999999999999999999"), // Bogus edition
+			createTestMessageURI(mOwnIdentities[1]) // Known author
+		};
+		
+		for(WoTMessageURI parent : parents) {
+			mMessageManager.onMessageReceived(
+				createTestMessage(mOwnIdentities[0], createTestMessageURI(mOwnIdentities[0]), parent, thread.clone(), getNextMessageDate()));
+		}
+		
+		Map<String, FreenetURI> candidates = identityManager.getUnlinkedIdentityCandidates();
+		final String id0 = WoTIdentity.getIDFromURI(unknown[0]);
+		final String id1 = WoTIdentity.getIDFromURI(unknown[1]);
+		assertEquals(new HashSet<String>(Arrays.asList(id0, id1)), candidates.keySet());
+		assertEquals(7, candidates.get(id0).getSuggestedEdition());
+		assertEquals(0, candidates.get(id1).getSuggestedEdition());
+		
+		assertTrue(identityManager.importUnlinkedIdentity(candidates.get(id0)));
+		assertFalse("Importing twice", identityManager.importUnlinkedIdentity(candidates.get(id0)));
+		
+		System.gc(); db.purge(); System.gc();
+		
+		WoTIdentity identity = identityManager.getIdentity(id0);
+		assertTrue(identity.isUnlinked());
+		identity.databaseIntegrityTest();
+		assertEquals(1, identityManager.getUnlinkedIdentities().size());
+		assertEquals(7, mMessageManager.getNewMessageListIndexEditionHint(identity));
+		// What the fetchers will request must be the message list which was referred to.
+		assertEquals(thread.getFreenetURI(), WoTMessageList.generateURI(identity, 3).sskForUSK());
+		
+		assertFalse("Regular identities must not become unlinked", mOwnIdentities[0].isUnlinked());
+		assertEquals(Collections.singleton(id1), identityManager.getUnlinkedIdentityCandidates().keySet());
+		
+		// References by messages of unlinked identities must be ignored
+		final WoTMessageURI uri = getUnknownMessageURI(unknown[0], list + 7);
+		final WoTMessageURI ignored = getUnknownMessageURI(getUnknownIdentityURI(100), list + 1);
+		final WoTMessageList messageList = new WoTMessageList(mFreetalk, identity, uri.getFreenetURI(), new ArrayList<MessageList.MessageReference>(
+			Arrays.asList(new MessageList.MessageReference(MessageID.construct(uri.getMessageID()), new FreenetURI("CHK@"), mBoard, getNextMessageDate()))));
+		messageList.initializeTransient(mFreetalk);
+		messageList.storeWithoutCommit();
+		Persistent.checkedCommit(db, this);
+		final WoTMessage message = WoTMessage.construct(mFreetalk, messageList, new FreenetURI("CHK@"), MessageID.construct(uri.getMessageID()),
+			ignored, ignored.clone(), mBoards, mBoard, identity, "title", getNextMessageDate(), "text", null);
+		mMessageManager.onMessageReceived(message);
+		assertEquals(Collections.singleton(id1), identityManager.getUnlinkedIdentityCandidates().keySet());
+		
+		// WoT has received it meanwhile
+		identity.markAsLinked("nickname");
+		identity.storeAndCommit();
+		System.gc(); db.purge(); System.gc();
+		identity = identityManager.getIdentity(id0);
+		assertFalse(identity.isUnlinked());
+		assertEquals("nickname", identity.getNickname());
+		assertEquals(0, identityManager.getUnlinkedIdentities().size());
+		assertEquals(0, mMessageManager.getNewMessageListIndexEditionHint(identity));
 	}
 	
 	/**

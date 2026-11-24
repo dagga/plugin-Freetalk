@@ -258,6 +258,13 @@ public final class ThreadPage extends WebPageImpl {
         authorNode.addChild("br");
         authorNode.addChild("#", l10n().getString("ThreadPage.Author.Posts") + ": " + mFreetalk.getMessageManager().getMessagesBy(author).size());
         authorNode.addChild("br");
+        
+        if(author.isUnlinked()) {
+        	// WoT typically does not know the identity so we cannot show anything which is obtained from it.
+        	authorNode.addChild("#", l10n().getString("ThreadPage.Author.Unlinked"));
+        	return;
+        }
+        
         authorNode.addChild("#", l10n().getString("ThreadPage.Author.TrustersCount") + ": ");
         try {
         	addTrustersInfo(authorNode, author);
@@ -355,7 +362,7 @@ public final class ThreadPage extends WebPageImpl {
 		if(ref != null && ref instanceof BoardThreadLink)
 			addMarkThreadAsUnreadButton(title, (BoardThreadLink)ref);
 
-		if(author != mOwnIdentity) {
+		if(author != mOwnIdentity && !author.isUnlinked()) { // WoT does not accept trust values for unknown identities
 			HTMLNode modButtons = title.addChild("div", "class", "button-row");
 
 			try {

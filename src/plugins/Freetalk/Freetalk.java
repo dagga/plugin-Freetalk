@@ -86,7 +86,7 @@ public final class Freetalk implements FredPlugin, FredPluginFCP, FredPluginL10n
 	public static final String WOT_PLUGIN_URI = "/WebOfTrust";
 	public static final String WOT_CONTEXT = PLUGIN_TITLE;
 	public static final String DATABASE_FILENAME = PLUGIN_TITLE + ".db4o";
-	public static final int DATABASE_FORMAT_VERSION = 3;
+	public static final int DATABASE_FORMAT_VERSION = 4;
 	/**
 	 * FIXME: Test various values of this and {@link #DATABASE_CACHE_PAGE_COUNT}, especially
 	 * considering that db4o implements the cache using a linked list and iterating over to find a
@@ -606,6 +606,26 @@ public final class Freetalk implements FredPlugin, FredPluginFCP, FredPluginL10n
 				+ " aren't supported anymore, sorry. Staying compatible with that would impair"
 				+ " development too much considering Freetalk wasn't working since 2012 anyway."
 				+ " If you really need the data use Freetalk build0012 with fred build01467.");
+		}
+		
+		if(oldVersion == 3) {
+			// Version 4 was introduced to stop storing the enum FetchFailedMarker.Reason because db4o uses
+			// reflection upon java.lang.Enum for storing enums, which Java >= 16 prohibits unless it is
+			// launched with "--add-opens java.base/java.lang=ALL-UNNAMED".
+			// It is intentional that no upgrade code is provided:
+			// - Once an enum was stored, the metadata which db4o has stored about the class
+			//   FetchFailedMarker refers to java.lang.Enum. So without --add-opens already a query for
+			//   the FetchFailedMarkers fails, we could not even delete them. And if the upgrade happened
+			//   with --add-opens or with an older Java then db4o would keep the old field in its
+			//   metadata, so the upgraded database would still fail to load without --add-opens.
+			// - No release of Freetalk has ever used version 3, it was introduced in 2018 for adapting to
+			//   recent fred versions, long after the last release build0013.
+			
+			throw new RuntimeException("Databases of format version 3 aren't supported anymore, sorry."
+				+ " They were only created by development versions of Freetalk after build0013 and"
+				+ " may be unreadable on Java 16 and later. Please create a new one by deleting "
+				+ DATABASE_FILENAME + ". If you really need the data use a development version of"
+				+ " Freetalk from before this change with Java 15 or earlier.");
 		}
 		
 		throw new RuntimeException("Your database is too outdated to be upgraded automatically, please create a new one by deleting " 

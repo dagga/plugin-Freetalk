@@ -20,12 +20,41 @@ import plugins.Freetalk.util.CurrentTimeUTC;
 public class FetchFailedMarker extends Persistent {
 	
 	public static enum Reason {
-		Unknown,
-		DataNotFound,
-		ParsingFailed
+		Unknown("Unknown"),
+		DataNotFound("DataNotFound"),
+		ParsingFailed("ParsingFailed");
+		
+		/**
+		 * The value which represents this Reason in the database, see {@link FetchFailedMarker#mReasonCode}.
+		 * ATTENTION: Changing the code of an existing Reason breaks existing databases! Thus this is specified explicitly instead of using name()
+		 * or ordinal(): Renaming or reordering the Reasons must not change what is stored.
+		 */
+		private final String mCode;
+		
+		private Reason(String myCode) {
+			mCode = myCode;
+		}
+		
+		/**
+		 * @throws IllegalArgumentException If there is no Reason with the given code, or if the code is null.
+		 */
+		private static Reason fromCode(String code) {
+			for(Reason reason : values()) {
+				if(reason.mCode.equals(code))
+					return reason;
+			}
+			
+			throw new IllegalArgumentException("Unknown reason code: " + code);
+		}
 	}
 
-	private Reason mReason;
+	/**
+	 * The {@link Reason#mCode} of the Reason.
+	 * 
+	 * ATTENTION: We do not store the enum itself because db4o has no native support for enums: It would use reflection upon the private fields of
+	 * java.lang.Enum to store it. Java 16 and later prohibit that unless the JVM is launched with "--add-opens java.base/java.lang=ALL-UNNAMED".
+	 */
+	private String mReasonCode;
 	
 	private Date mDate;
 	
@@ -43,7 +72,7 @@ public class FetchFailedMarker extends Persistent {
 		if(myDate == null) throw new NullPointerException();
 		if(myDateOfNextRetry == null) throw new NullPointerException();
 		
-		mReason = myReason;
+		mReasonCode = myReason.mCode;
 		mDate = myDate;
 		mNumberOfRetries = 0;
 		mDateOfNextRetry = myDateOfNextRetry;
@@ -54,8 +83,14 @@ public class FetchFailedMarker extends Persistent {
 	public void databaseIntegrityTest() throws Exception {
 		checkedActivate(1);
 		
-		if(mReason == null)
-			throw new NullPointerException("mReason==null");
+		if(mReasonCode == null)
+			throw new NullPointerException("mReasonCode==null");
+		
+		try {
+			Reason.fromCode(mReasonCode);
+		} catch(IllegalArgumentException e) {
+			throw new IllegalStateException("mReasonCode is invalid: " + mReasonCode, e);
+		}
 		
 		if(mDate == null)
 			throw new NullPointerException("mDate==null");
@@ -81,10 +116,10 @@ public class FetchFailedMarker extends Persistent {
 	 * NOT synchronized! Lock the MessageManager when working on FetchFailedMarker objects.
 	 */
 	public void setReason(Reason newReason) {
-		checkedActivate(1);
+		checkedActivate(1); // String is a db4o primitive type so 1 is enough
 		if(newReason == null) throw new NullPointerException();
 		
-		mReason = newReason;
+		mReasonCode = newReason.mCode;
 	}
 
 	/**
@@ -152,13 +187,12 @@ public class FetchFailedMarker extends Persistent {
 
 	@Override public void deleteWithoutCommit() {
 		super.deleteWithoutCommit(1);
-		// All members are db4o native types which we don't have to delete - 
-		// even mReason: Toad said that we do not have to delete enums on our own, db4o does the job.
+		// All members are db4o native types which we don't have to delete.
 	}
 
 	public Reason getReason() {
-		checkedActivate(1);
-		return mReason;
+		checkedActivate(1); // String is a db4o primitive type so 1 is enough
+		return Reason.fromCode(mReasonCode);
 	}
 
 }

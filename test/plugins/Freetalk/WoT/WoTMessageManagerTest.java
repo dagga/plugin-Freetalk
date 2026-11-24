@@ -5,6 +5,7 @@ package plugins.Freetalk.WoT;
 
 import java.net.MalformedURLException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.Iterator;
@@ -52,6 +53,9 @@ public class WoTMessageManagerTest extends DatabaseBasedTest {
 
 	private int mMessageListIndex = 0;
 	
+	/** @see #getNextMessageDate() */
+	private long mLastMessageDate;
+	
 	/**
 	 * The threads which we stored in the database. The unit test should test whether board.getThreads() returns the threads in the order in which they are stored
 	 * in this list. It should of course also test whether no thread is missing, or no thread is returned even though it should
@@ -82,6 +86,9 @@ public class WoTMessageManagerTest extends DatabaseBasedTest {
 		mThreads = new LinkedList<String>();
 		mReplies = new Hashtable<String, LinkedList<String>>(64);
 		mFetchedStates = new Hashtable<String, Boolean>(64);
+		
+		// Start in the past because class Message replaces dates which are in the future.
+		mLastMessageDate = CurrentTimeUTC.getInMillis() - 24 * 60 * 60 * 1000;
 	}
 	
 	private void constructIdentities() throws MalformedURLException {
@@ -140,6 +147,20 @@ public class WoTMessageManagerTest extends DatabaseBasedTest {
 		
 	}
 	
+	/**
+	 * Returns a date which is strictly greater than the one which was returned by the previous call.
+	 * 
+	 * The tests rely on threads and replies being sorted by date in the order in which they were created. {@link CurrentTimeUTC#get()} is not
+	 * suitable for that: Multiple messages can be created within the same millisecond, and then their order is undefined.
+	 * 
+	 * The distance between two dates must be more than 1 millisecond because SubscribedBoard guesses the date of a parent message which was
+	 * not downloaded yet to be 1 millisecond before its reply. That must not be equal to the date of a different message.
+	 */
+	private Date getNextMessageDate() {
+		mLastMessageDate += 1000;
+		return new Date(mLastMessageDate);
+	}
+	
 	private WoTMessage createTestMessage(WoTOwnIdentity author, WoTMessage myParent, WoTMessageURI myThreadURI)
 		throws MalformedURLException, InvalidParameterException, NoSuchIdentityException, NoSuchMessageException {
 		
@@ -149,15 +170,17 @@ public class WoTMessageManagerTest extends DatabaseBasedTest {
 		WoTMessageURI myURI = new WoTMessageURI(myListURI + "#" + myUUID);
 		myURI.initializeTransient(mFreetalk);
 		
+		Date myDate = getNextMessageDate();
+		
 		MessageList.MessageReference ref = new MessageList.MessageReference(MessageID.construct(myURI.getMessageID()),
-				myFreenetURI, mBoard, CurrentTimeUTC.get());
+				myFreenetURI, mBoard, myDate);
 		
 		WoTMessageList myList = storeMessageList(author, myListURI, ref);
 		
 		WoTMessageURI myParentURI = myParent != null ? myParent.getURI() : null;
 		
 		WoTMessage message = WoTMessage.construct(mFreetalk, myList, myFreenetURI, MessageID.construct(myURI.getMessageID()),
-				myThreadURI, myParentURI, mBoards, mBoards.iterator().next(),  author, "message " + myUUID, CurrentTimeUTC.get(),
+				myThreadURI, myParentURI, mBoards, mBoards.iterator().next(),  author, "message " + myUUID, myDate,
 				"message body " + myUUID, null);
 		
 		message.initializeTransient(mFreetalk);

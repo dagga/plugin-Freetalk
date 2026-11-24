@@ -280,7 +280,10 @@ public final class WebInterface {
 				OwnIdentity ownIdentity = mFreetalk.getIdentityManager().getOwnIdentity(request.getPartAsString("OwnIdentityID", 64));
 				mSessionManager.createSession(ownIdentity.getID(), ctx);
 			} catch(NoSuchIdentityException e) {
-				throw new RedirectException(logIn);
+				// We must not throw a RedirectException to the LogIn page here: fred would handle it by
+				// calling this function again with the same POST data, resulting in an infinite loop.
+				writeTemporaryRedirect(ctx, "Unknown identity, redirecting to log in page", logIn.toString());
+				return;
 			}
 
 			writeTemporaryRedirect(ctx, "Login successful, redirecting to home page", Freetalk.PLUGIN_URI + "/");

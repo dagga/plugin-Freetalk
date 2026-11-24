@@ -52,7 +52,7 @@ public final class StatisticsPage extends WebPageImpl {
 		{
 			HTMLNode statsbox = addContentBox(l10n().getString("StatisticsPage.MessageStatistics.Title"));
 			final int ownMessageCount = messageManager.countOwnMessages();
-			statsbox.addChild("p", l10n().getString("StatisticsPage.MessageStatistics.NonOwnMessageCount") + " " + (messageManager.countMessages() - ownMessageCount));
+			statsbox.addChild("p", l10n().getString("StatisticsPage.MessageStatistics.NonOwnMessageCount") + " " + messageManager.countMessages());
 			statsbox.addChild("p", l10n().getString("StatisticsPage.MessageStatistics.OwnMessageCount") + " " + ownMessageCount);
 
 		}

@@ -280,7 +280,10 @@ public final class WebInterface {
 				OwnIdentity ownIdentity = mFreetalk.getIdentityManager().getOwnIdentity(request.getPartAsString("OwnIdentityID", 64));
 				mSessionManager.createSession(ownIdentity.getID(), ctx);
 			} catch(NoSuchIdentityException e) {
-				throw new RedirectException(logIn);
+				// We must not throw a RedirectException to the LogIn page here: fred would handle it by
+				// calling this function again with the same POST data, resulting in an infinite loop.
+				writeTemporaryRedirect(ctx, "Unknown identity, redirecting to log in page", logIn.toString());
+				return;
 			}
 
 			writeTemporaryRedirect(ctx, "Login successful, redirecting to home page", Freetalk.PLUGIN_URI + "/");
@@ -798,8 +801,6 @@ public final class WebInterface {
 		introduceIdentityToadlet = new IntroduceIdentityWebInterfaceToadlet(null, this, clientCore, "IntroduceIdentity");
 		cssToadlet = new CSSWebInterfaceToadlet(null, this, clientCore, "CSS");
 		
-		// FIXME: Why is LogInToadlet registered both as visible and invisible?
-		container.register(logInToadlet, null, Freetalk.PLUGIN_URI + "/LogIn", true, true);
 		container.register(createIdentityToadlet, null, Freetalk.PLUGIN_URI + "/CreateIdentity", true, true);
 		container.register(newThreadToadlet, null, Freetalk.PLUGIN_URI + "/NewThread", true, true);
 		container.register(showBoardToadlet, null, Freetalk.PLUGIN_URI + "/showBoard", true, true);
@@ -843,6 +844,7 @@ public final class WebInterface {
 				newReplyToadlet,
 				newBoardToadlet,
 				deleteEmptyBoardsToadlet,
+				changeTrustToadlet,
 				getPuzzleToadlet,
 				introduceIdentityToadlet,
 				cssToadlet,

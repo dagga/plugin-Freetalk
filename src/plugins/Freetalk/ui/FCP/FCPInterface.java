@@ -921,7 +921,7 @@ public final class FCPInterface implements FredPluginFCP {
                 final String messageText = new String(utf8Bytes, "UTF-8");
 
                 // post new message
-                mFreetalk.getMessageManager().postMessage(parentThread.getURI(),
+                mFreetalk.getMessageManager().postMessage(parentThread != null ? parentThread.getURI() : null,
                         parentMessage,
                         targetBoards,
                         replyToBoard,

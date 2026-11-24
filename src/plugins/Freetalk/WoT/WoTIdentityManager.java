@@ -1043,7 +1043,7 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 	
 	/**
 	 * Asks WoT whether the given identity may be fetched as unlinked identity.
-	 * That is the case if at least one own identity has no score for it, or a score which is not negative.
+	 * That is the case if WoT does not know it, or if none of the own identities has a negative score for it.
 	 * 
 	 * @throws Exception If WoT could not be asked.
 	 */
@@ -1061,11 +1061,11 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 				return true; // Not known by WoT.
 			}
 			
-			if(score == null || score.equals("null") || Integer.parseInt(score) >= 0)
-				return true;
+			if(score != null && !score.equals("null") && Integer.parseInt(score) < 0)
+				return false;
 		}
 		
-		return false;
+		return true;
 	}
 	
 	/**

@@ -164,24 +164,35 @@ public class WoTMessageManagerTest extends DatabaseBasedTest {
 	private WoTMessage createTestMessage(WoTOwnIdentity author, WoTMessage myParent, WoTMessageURI myThreadURI)
 		throws MalformedURLException, InvalidParameterException, NoSuchIdentityException, NoSuchMessageException {
 		
-		FreenetURI myFreenetURI = new FreenetURI("CHK@");
-		UUID myUUID = UUID.randomUUID();
-		FreenetURI myListURI = WoTMessageList.assembleURI(author.getRequestURI(), mMessageListIndex++);
-		WoTMessageURI myURI = new WoTMessageURI(myListURI + "#" + myUUID);
-		myURI.initializeTransient(mFreetalk);
+		return createTestMessage(author, myParent, myThreadURI, getNextMessageDate());
+	}
+	
+	private WoTMessage createTestMessage(WoTOwnIdentity author, WoTMessage myParent, WoTMessageURI myThreadURI, Date myDate)
+		throws MalformedURLException, InvalidParameterException, NoSuchIdentityException, NoSuchMessageException {
 		
-		Date myDate = getNextMessageDate();
+		return createTestMessage(author, createTestMessageURI(author), myParent != null ? myParent.getURI() : null, myThreadURI, myDate);
+	}
+	
+	private WoTMessageURI createTestMessageURI(WoTOwnIdentity author) throws MalformedURLException {
+		FreenetURI myListURI = WoTMessageList.assembleURI(author.getRequestURI(), mMessageListIndex++);
+		WoTMessageURI myURI = new WoTMessageURI(myListURI + "#" + UUID.randomUUID());
+		myURI.initializeTransient(mFreetalk);
+		return myURI;
+	}
+	
+	private WoTMessage createTestMessage(WoTOwnIdentity author, WoTMessageURI myURI, WoTMessageURI myParentURI, WoTMessageURI myThreadURI,
+			Date myDate) throws MalformedURLException, InvalidParameterException, NoSuchIdentityException, NoSuchMessageException {
+		
+		FreenetURI myFreenetURI = new FreenetURI("CHK@");
 		
 		MessageList.MessageReference ref = new MessageList.MessageReference(MessageID.construct(myURI.getMessageID()),
 				myFreenetURI, mBoard, myDate);
 		
-		WoTMessageList myList = storeMessageList(author, myListURI, ref);
-		
-		WoTMessageURI myParentURI = myParent != null ? myParent.getURI() : null;
+		WoTMessageList myList = storeMessageList(author, myURI.getFreenetURI(), ref);
 		
 		WoTMessage message = WoTMessage.construct(mFreetalk, myList, myFreenetURI, MessageID.construct(myURI.getMessageID()),
-				myThreadURI, myParentURI, mBoards, mBoards.iterator().next(),  author, "message " + myUUID, myDate,
-				"message body " + myUUID, null);
+				myThreadURI, myParentURI, mBoards, mBoards.iterator().next(),  author, "message " + myURI.getMessageID().substring(0, 36), myDate,
+				"message body " + myURI.getMessageID(), null);
 		
 		message.initializeTransient(mFreetalk);
 		
@@ -298,6 +309,160 @@ public class WoTMessageManagerTest extends DatabaseBasedTest {
 		assertFalse(expectedThreads.hasNext());
 	}
 
+	
+	private List<String> getReplyIDs(Message thread) {
+		// Ensure that the order comes from the database, not from the db4o cache.
+		System.gc();
+		db.purge();
+		System.gc();
+		
+		List<String> result = new ArrayList<String>();
+		for(final BoardMessageLink ref : mSubscribedBoard.getAllThreadReplies(thread.getID(), true))
+			result.add(ref.getMessageID());
+		return result;
+	}
+	
+	private void permute(List<Integer> prefix, int size, List<List<Integer>> result) {
+		if(prefix.size() == size) {
+			result.add(new ArrayList<Integer>(prefix));
+			return;
+		}
+		
+		for(int i = 0; i < size; ++i) {
+			if(prefix.contains(i))
+				continue;
+			prefix.add(i);
+			permute(prefix, size, result);
+			prefix.remove(prefix.size() - 1);
+		}
+	}
+	
+	/**
+	 * The XML of messages only contains their date with a precision of 1 second so a reply can have the same date as its parent.
+	 * The parent must be sorted before it nevertheless, no matter in which order they were downloaded.
+	 */
+	public void testReplySortingWithEqualDates() throws Exception {
+		final int count = 4;
+		final List<List<Integer>> permutations = new ArrayList<List<Integer>>();
+		permute(new ArrayList<Integer>(), count, permutations);
+		assertEquals(24, permutations.size());
+		
+		for(List<Integer> permutation : permutations) {
+			final Date date = getNextMessageDate();
+			final WoTMessage thread = createTestMessage(mOwnIdentities[0], null, null, date);
+			mMessageManager.onMessageReceived(thread);
+			
+			// Each message is a reply to the previous one.
+			final WoTMessage[] replies = new WoTMessage[count];
+			final List<String> expected = new ArrayList<String>();
+			for(int i = 0; i < count; ++i) {
+				replies[i] = createTestMessage(mOwnIdentities[i % mOwnIdentities.length], i == 0 ? thread : replies[i-1], thread.getURI(), date);
+				expected.add(replies[i].getID());
+			}
+			
+			for(int i : permutation)
+				mMessageManager.onMessageReceived(replies[i]);
+			
+			assertEquals("Download order: " + permutation, expected, getReplyIDs(thread));
+		}
+	}
+	
+	/** Same as {@link #testReplySortingWithEqualDates()}, but with a tree instead of a chain and with replies of different date around it. */
+	public void testReplySortingWithEqualDatesInTree() throws Exception {
+		final WoTMessage thread = createTestMessage(mOwnIdentities[0], null, null);
+		mMessageManager.onMessageReceived(thread);
+		
+		final WoTMessage before = createTestMessage(mOwnIdentities[1], thread, thread.getURI());
+		final Date date = getNextMessageDate();
+		final WoTMessage a = createTestMessage(mOwnIdentities[0], before, thread.getURI(), date);
+		final WoTMessage b = createTestMessage(mOwnIdentities[1], thread, thread.getURI(), date);
+		final WoTMessage aa = createTestMessage(mOwnIdentities[2], a, thread.getURI(), date);
+		final WoTMessage ab = createTestMessage(mOwnIdentities[3], a, thread.getURI(), date);
+		final WoTMessage ba = createTestMessage(mOwnIdentities[4], b, thread.getURI(), date);
+		final WoTMessage after = createTestMessage(mOwnIdentities[1], a, thread.getURI());
+		
+		for(WoTMessage m : new WoTMessage[] { after, ba, ab, aa, b, a, before })
+			mMessageManager.onMessageReceived(m);
+		
+		final List<String> result = getReplyIDs(thread);
+		assertEquals(7, result.size());
+		assertEquals(7, new HashSet<String>(result).size());
+		assertEquals(before.getID(), result.get(0));
+		assertEquals(after.getID(), result.get(6));
+		assertTrue(result.indexOf(a.getID()) < result.indexOf(aa.getID()));
+		assertTrue(result.indexOf(a.getID()) < result.indexOf(ab.getID()));
+		assertTrue(result.indexOf(b.getID()) < result.indexOf(ba.getID()));
+		
+		// The FCP interface uses this
+		final List<String> allIDs = new ArrayList<String>();
+		for(BoardMessageLink ref : mSubscribedBoard.getMessagesByMinimumDate(new Date(1), false, true))
+			allIDs.add(ref.getMessageID());
+		assertEquals(8, allIDs.size());
+		assertEquals(thread.getID(), allIDs.get(0));
+		assertEquals(result, allIDs.subList(1, 8));
+		
+		final List<String> allIDs2 = new ArrayList<String>();
+		for(BoardMessageLink ref : mSubscribedBoard.getMessagesByMinimumIndex(1, false, true))
+			allIDs2.add(ref.getMessageID());
+		assertEquals(allIDs, allIDs2);
+	}
+	
+	/** Siblings and threads of equal date are sorted by the order in which they were downloaded. */
+	public void testSortingOfSiblingsAndThreadsWithEqualDates() throws Exception {
+		final Date date = getNextMessageDate();
+		final LinkedList<String> expectedThreads = new LinkedList<String>();
+		WoTMessage thread = null;
+		
+		for(int i = 0; i < 20; ++i) {
+			thread = createTestMessage(mOwnIdentities[i % mOwnIdentities.length], null, null, date);
+			mMessageManager.onMessageReceived(thread);
+			expectedThreads.addFirst(thread.getID());
+		}
+		
+		final List<String> expectedReplies = new ArrayList<String>();
+		for(int i = 0; i < 20; ++i) {
+			final WoTMessage reply = createTestMessage(mOwnIdentities[i % mOwnIdentities.length], thread, thread.getURI(), date);
+			mMessageManager.onMessageReceived(reply);
+			expectedReplies.add(reply.getID());
+		}
+		
+		assertEquals(expectedReplies, getReplyIDs(thread));
+		
+		final List<String> threads = new ArrayList<String>();
+		for(BoardThreadLink ref : mSubscribedBoard.getThreads())
+			threads.add(ref.getThreadID());
+		assertEquals(expectedThreads, threads);
+		
+		assertEquals(expectedReplies.get(19), mSubscribedBoard.getLatestMessage().getMessageID());
+	}
+	
+	/** An attacker could publish messages which are parents of each other. No message may be lost and sorting must terminate. */
+	public void testReplySortingWithParentCycle() throws Exception {
+		final Date date = getNextMessageDate();
+		final WoTMessage thread = createTestMessage(mOwnIdentities[0], null, null, date);
+		mMessageManager.onMessageReceived(thread);
+		
+		final WoTMessageURI[] uris = new WoTMessageURI[3];
+		for(int i = 0; i < uris.length; ++i)
+			uris[i] = createTestMessageURI(mOwnIdentities[i]);
+		
+		final HashSet<String> expected = new HashSet<String>();
+		WoTMessage last = null;
+		for(int i = 0; i < uris.length; ++i) {
+			last = createTestMessage(mOwnIdentities[i], uris[i], uris[(i + 1) % uris.length].clone(), thread.getURI(), date);
+			mMessageManager.onMessageReceived(last);
+			expected.add(last.getID());
+		}
+		final WoTMessage child = createTestMessage(mOwnIdentities[4], last, thread.getURI(), date);
+		mMessageManager.onMessageReceived(child);
+		expected.add(child.getID());
+		
+		final List<String> result = getReplyIDs(thread);
+		assertEquals(4, result.size());
+		assertEquals(expected, new HashSet<String>(result));
+		assertEquals(result, getReplyIDs(thread));
+		assertTrue(result.indexOf(last.getID()) < result.indexOf(child.getID()));
+	}
 	
 	/**
 	 * When you obtain a message object from the database, different kinds of other message objects can be queried from the message:

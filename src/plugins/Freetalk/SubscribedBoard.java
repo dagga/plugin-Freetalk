@@ -1,6 +1,11 @@
 package plugins.Freetalk;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Random;
 
 import plugins.Freetalk.Message.MessageID;
@@ -169,6 +174,7 @@ public final class SubscribedBoard extends Board {
         q.constrain(BoardMessageLink.class);
         q.descend("mBoard").constrain(this);
         q.descend("mDate").orderDescending();
+        q.descend("mIndex").orderDescending(); // Dates can be equal
       
         // Do not use a constrain() because the case where the latest message has no message object should not happen very often.
         for(BoardMessageLink ref : new Persistent.InitializingObjectSet<BoardMessageLink>(mFreetalk, q)) {
@@ -790,6 +796,7 @@ public final class SubscribedBoard extends Board {
     	q.constrain(BoardThreadLink.class);
     	q.descend("mBoard").constrain(SubscribedBoard.this).identity(); // TODO: Benchmark whether switching the order of those two constrains makes it faster.
     	q.descend("mLastReplyDate").orderDescending();
+    	q.descend("mIndex").orderDescending(); // Dates can be equal
     	return new Persistent.InitializingObjectSet<BoardThreadLink>(mFreetalk, q);
     }
 
@@ -963,7 +970,7 @@ public final class SubscribedBoard extends Board {
         }
     }
 
-    public synchronized ObjectSet<BoardMessageLink> getMessagesByMinimumIndex(
+    public synchronized List<BoardMessageLink> getMessagesByMinimumIndex(
             int minimumIndex,
             final boolean sortByMessageIndexAscending,
             final boolean sortByMessageDateAscending)
@@ -978,12 +985,12 @@ public final class SubscribedBoard extends Board {
             q.descend("mIndex").orderAscending();
         }
         if (sortByMessageDateAscending) {
-            q.descend("mDate").orderAscending();
+            return this.<BoardMessageLink>executeSortedByDate(q);
         }
         return new Persistent.InitializingObjectSet<BoardMessageLink>(mFreetalk, q);
     }
 
-    public synchronized ObjectSet<BoardMessageLink> getMessagesByMinimumDate(
+    public synchronized List<BoardMessageLink> getMessagesByMinimumDate(
     		Date minimumDate,
             final boolean sortByMessageIndexAscending,
             final boolean sortByMessageDateAscending)
@@ -997,7 +1004,7 @@ public final class SubscribedBoard extends Board {
             q.descend("mIndex").orderAscending();
         }
         if (sortByMessageDateAscending) {
-            q.descend("mDate").orderAscending();
+            return this.<BoardMessageLink>executeSortedByDate(q);
         }
         return new Persistent.InitializingObjectSet<BoardMessageLink>(mFreetalk, q);
     }
@@ -1038,19 +1045,109 @@ public final class SubscribedBoard extends Board {
     }
 
     /**
-     * Get all replies to the given thread, sorted ascending by date if requested
+     * Get all replies to the given thread, sorted ascending by date if requested.
+     * A reply which has the same date as its parent message is sorted after the parent.
      */
-    public synchronized ObjectSet<BoardReplyLink> getAllThreadReplies(final String threadID, final boolean sortByDateAscending) {
+    public synchronized List<BoardReplyLink> getAllThreadReplies(final String threadID, final boolean sortByDateAscending) {
     	final Query q = mDB.query();
         q.constrain(BoardReplyLink.class);
         q.descend("mBoard").constrain(this).identity();
         q.descend("mThreadID").constrain(threadID);
         
         if (sortByDateAscending) {
-            q.descend("mDate").orderAscending();
+            return this.<BoardReplyLink>executeSortedByDate(q);
         }
         
 		return new Persistent.InitializingObjectSet<BoardReplyLink>(mFreetalk, q);
+    }
+
+    /**
+     * Executes a query for {@link BoardMessageLink}s and sorts the result ascending by date.
+     * 
+     * Dates can be equal, especially because the XML of messages only contains them with a precision of 1 second. Links of equal date are sorted:
+     * - by {@link #sortParentsBeforeReplies(List)}.
+     * - and where that does not matter by their index, i.e. the order in which they were added to this board.
+     */
+    private <T extends BoardMessageLink> List<T> executeSortedByDate(final Query q) {
+    	q.descend("mDate").orderAscending();
+    	q.descend("mIndex").orderAscending();
+    	
+    	final ObjectSet<T> links = new Persistent.InitializingObjectSet<T>(mFreetalk, q);
+    	final ArrayList<T> result = new ArrayList<T>(links.size());
+    	final ArrayList<T> linksOfEqualDate = new ArrayList<T>();
+    	
+    	for(final T link : links) {
+    		if(!linksOfEqualDate.isEmpty() && !linksOfEqualDate.get(0).getMessageDate().equals(link.getMessageDate())) {
+    			result.addAll(sortParentsBeforeReplies(linksOfEqualDate));
+    			linksOfEqualDate.clear();
+    		}
+    		
+    		linksOfEqualDate.add(link);
+    	}
+    	
+    	result.addAll(sortParentsBeforeReplies(linksOfEqualDate));
+    	
+    	return result;
+    }
+    
+    /**
+     * Sorts the given links so parent messages are before their replies. Besides that their order is preserved.
+     * 
+     * Sorting by index is not sufficient to achieve this: Messages are downloaded in random order, so the index of a parent can be higher than the one
+     * of its reply.
+     * 
+     * NOTICE: The parent IDs are chosen by the remote authors. An attacker might have created messages which are parents of each other, or very long
+     * chains of messages. Thus this must not assume that there are no cycles, and must not use recursion.
+     */
+    private static <T extends BoardMessageLink> List<T> sortParentsBeforeReplies(final List<T> links) {
+    	if(links.size() < 2)
+    		return links;
+    	
+    	// There can be multiple links for the same message, see findOrCreateParentThread().
+    	final LinkedHashMap<String, List<T>> linksByMessageID = new LinkedHashMap<String, List<T>>();
+    	for(final T link : links) {
+    		List<T> linksOfMessage = linksByMessageID.get(link.getMessageID());
+    		if(linksOfMessage == null) {
+    			linksOfMessage = new ArrayList<T>(1);
+    			linksByMessageID.put(link.getMessageID(), linksOfMessage);
+    		}
+    		linksOfMessage.add(link);
+    	}
+    	
+    	final List<T> result = new ArrayList<T>(links.size());
+    	final HashSet<String> visited = new HashSet<String>();
+    	final ArrayDeque<String> ancestors = new ArrayDeque<String>();
+    	
+    	for(final String messageID : linksByMessageID.keySet()) {
+    		// Walk up to the topmost parent which was not added to the result yet. Cycles are prevented by not visiting anything twice.
+    		String id = messageID;
+    		while(id != null && linksByMessageID.containsKey(id) && visited.add(id)) {
+    			ancestors.push(id);
+    			id = getParentID(linksByMessageID.get(id));
+    		}
+    		
+    		// Add to the result from top to bottom.
+    		while(!ancestors.isEmpty())
+    			result.addAll(linksByMessageID.get(ancestors.pop()));
+    	}
+    	
+    	return result;
+    }
+    
+    /**
+     * @param linksOfMessage All links must be for the same message.
+     * @return The ID of the parent of the message. Null if the message was not downloaded yet or has no parent.
+     */
+    private static <T extends BoardMessageLink> String getParentID(final List<T> linksOfMessage) {
+    	for(final T link : linksOfMessage) {
+    		try {
+    			return link.getMessage().getParentID();
+    		} catch(NoSuchMessageException e) {
+    			// Not downloaded or no parent, try the next link
+    		}
+    	}
+    	
+    	return null;
     }
 
     // @IndexedClass // I can't think of any query which would need to get all UnwantedMessageLink objects.
@@ -1672,7 +1769,7 @@ public final class SubscribedBoard extends Board {
      		boolean hasActuallyFetchedReplies = false;
     		boolean threadWasRead = wasRead();
     		
-    		for(final BoardReplyLink reply : getBoard().getAllThreadReplies(getThreadID(), true)) {
+    		for(final BoardReplyLink reply : getBoard().getAllThreadReplies(getThreadID(), false)) {
     			IfNotEquals.thenThrow(reply.getThreadID(), mThreadID, "reply.getThreadID()");
     			
 				if(!reply.wasRead())
@@ -1732,21 +1829,21 @@ public final class SubscribedBoard extends Board {
 		}
     	
     	protected void onMessageRemoved(Message removedMessage) {
-    		// TODO: This assumes that getAllThreadReplies() obtains the sorted order using an index. This is not the case right now. If we do not
-    		// optimize getAllThreadReplies() we should just iterate over the unsorted replies list and do maximum search.
-
     		// TODO: Put this in a function "computeLastReplyDate"....
     		
 			checkedActivate(1); // String/Date are db4o primitive types so 1 is enough
 
-    		final ObjectSet<BoardReplyLink> replies = getBoard().getAllThreadReplies(mThreadID, true);
+    		final List<BoardReplyLink> replies = getBoard().getAllThreadReplies(mThreadID, false);
 
     		if(!removedMessage.getDate().before(mLastReplyDate)) {
-    			final int repliesCount = replies.size();
-    			if(repliesCount>0)
-    				mLastReplyDate = replies.get(repliesCount-1).getMessageDate();
-    			else
-    				mLastReplyDate = mDate;
+    			Date lastReplyDate = null;
+    			
+    			for(BoardReplyLink reply : replies) {
+    				if(lastReplyDate == null || reply.getMessageDate().after(lastReplyDate))
+    					lastReplyDate = reply.getMessageDate();
+    			}
+    			
+    			mLastReplyDate = lastReplyDate != null ? lastReplyDate : mDate;
     		}
 
     		// If the last unread message in the thread was removed, the thread IS read now...

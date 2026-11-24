@@ -598,7 +598,19 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 	}
 	
 
-	private synchronized void addFreetalkContext(WoTIdentity oid) throws Exception {
+	/**
+	 * Adds the Freetalk context to the given identity at WoT. Does nothing if WoT has it already.
+	 * 
+	 * ATTENTION: WoT publishes this to the network. So for the privacy of the user this must only be called for an identity which the user has decided to
+	 * use with Freetalk, especially not for all identities which we obtain from WoT: If all of them received the context at the same time then this would
+	 * help others to notice that they belong to the same user.
+	 * 
+	 * Not synchronized because it does not access anything which needs to be.
+	 */
+	protected void addFreetalkContext(WoTOwnIdentity oid) throws Exception {
+		if(mIsUnitTest)
+			return;
+		
 		SimpleFieldSet params = new SimpleFieldSet(true);
 		params.putOverwrite("Message", "AddContext");
 		params.putOverwrite("Identity", oid.getID());
@@ -716,13 +728,9 @@ public final class WoTIdentityManager extends IdentityManager implements PrioRun
 		
 		WoTOwnIdentity newIdentity = (WoTOwnIdentity)identity;
 		
-		// TODO: Do after an own message is posted. I have not decided at which place to do this :|
-		try {
-			addFreetalkContext(newIdentity);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-			
+		// We intentionally do not call addFreetalkContext() here, see its JavaDoc. It is called by WoTMessageManager.postMessage().
+		// If the identity was created using Freetalk it has the context already.
+		
 		PersistentTask introductionTask = new IntroduceIdentityTask((WoTOwnIdentity)newIdentity);
 		mFreetalk.getTaskManager().storeTaskWithoutCommit(introductionTask);
 		

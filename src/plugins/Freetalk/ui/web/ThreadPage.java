@@ -473,7 +473,7 @@ public final class ThreadPage extends WebPageImpl {
 					// TODO: Move to proper class
 					// mNickname + "@" + mID + "." + Freetalk.WOT_CONTEXT.toLowerCase();
 					final Pattern pattern = Pattern.compile(".*?@(.*)."+ Freetalk.WOT_CONTEXT.toLowerCase());
-					final Matcher matcher = pattern.matcher(t.mContent);
+					final Matcher matcher = pattern.matcher(specifiedAuthor);
 					
 					if (!matcher.matches()) {
 						authorNode.addChild("b", specifiedAuthor);

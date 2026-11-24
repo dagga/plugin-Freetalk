@@ -798,8 +798,6 @@ public final class WebInterface {
 		introduceIdentityToadlet = new IntroduceIdentityWebInterfaceToadlet(null, this, clientCore, "IntroduceIdentity");
 		cssToadlet = new CSSWebInterfaceToadlet(null, this, clientCore, "CSS");
 		
-		// FIXME: Why is LogInToadlet registered both as visible and invisible?
-		container.register(logInToadlet, null, Freetalk.PLUGIN_URI + "/LogIn", true, true);
 		container.register(createIdentityToadlet, null, Freetalk.PLUGIN_URI + "/CreateIdentity", true, true);
 		container.register(newThreadToadlet, null, Freetalk.PLUGIN_URI + "/NewThread", true, true);
 		container.register(showBoardToadlet, null, Freetalk.PLUGIN_URI + "/showBoard", true, true);
@@ -843,6 +841,7 @@ public final class WebInterface {
 				newReplyToadlet,
 				newBoardToadlet,
 				deleteEmptyBoardsToadlet,
+				changeTrustToadlet,
 				getPuzzleToadlet,
 				introduceIdentityToadlet,
 				cssToadlet,

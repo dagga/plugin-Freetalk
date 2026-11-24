@@ -28,6 +28,10 @@
 	   = Maximum version which Freetalk's code can use features of. -->
 	<property name="source-version" value="8"/>
 	<property name="target-version" value="8"/>
+	<!-- When compiling Freetalk target-version is also passed as "release" to javac. This prevents
+	     javac of Java >= 9 from compiling against JRE classes which do not exist in the target
+	     version. Ant ignores it on older Java versions.
+	     It cannot be used for db4o as it uses the non-public package sun.nio.ch.               -->
 	<!-- To allow you to restart your debug node after recompiling without manually reloading
 	     the Freetalk plugin you can specifiy this property to point to the node's Freetalk.jar.
 	     The Ant builder will delete it automatically as part of the "clean" target. -->
@@ -184,7 +188,7 @@
 		<echo message="Updated build version to ${git.revision} in ${build}/${version.src}"/>
 
 		<!-- Force compile of Version.java in case compile of ${src} didn't trigger it -->
-		<javac srcdir="${build}" destdir="${build}" debug="on" optimize="on" source="${source-version}" target="${target-version}">
+		<javac srcdir="${build}" destdir="${build}" debug="on" optimize="on" source="${source-version}" target="${target-version}" release="${target-version}">
 			<classpath>
 				<path refid="submodules.path"/>
 				<path refid="libraries.classpath"/>
@@ -192,7 +196,7 @@
 			<include name="${version.src}"/>
 		</javac>
 		
-		<javac srcdir="src/" destdir="${build}" debug="on" optimize="on" source="${source-version}" target="${target-version}">
+		<javac srcdir="src/" destdir="${build}" debug="on" optimize="on" source="${source-version}" target="${target-version}" release="${target-version}">
 			<classpath>
 				<path refid="submodules.path"/>
 				<path refid="libraries.classpath"/>
@@ -212,7 +216,7 @@
 
 	<target name="junit-compile" depends="compile">
 		<javac srcdir="test/" destdir="${build-test}/classes" debug="on" optimize="on"
-				source="${source-version}" target="${target-version}">
+				source="${source-version}" target="${target-version}" release="${target-version}">
 			
 			<classpath>
 				<path refid="submodules.path"/>

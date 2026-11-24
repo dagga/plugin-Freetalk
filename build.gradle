@@ -4,6 +4,12 @@ sourceSets.main.java.srcDirs = ['src/']
 sourceSets.test.java.srcDirs = ['test/']
 java { sourceCompatibility = targetCompatibility = 8 }
 tasks.withType(JavaCompile).configureEach { options.encoding = "UTF-8" }
+// source-/targetCompatibility do not prevent javac of Java >= 9 from compiling against the JRE
+// classes of its own version, e.g. methods of ByteBuffer which do not exist in Java 8. "release"
+// does.
+// Cannot be used for db4o: NIOFileAdapter uses the package sun.nio.ch, which is not public.
+if(JavaVersion.current().isJava9Compatible())
+	[ compileJava, compileTestJava ].each { it.options.release = 8 }
 javadoc.enabled = false
 
 // Directory which contains freenet.jar and the JARs of fred's dependencies.

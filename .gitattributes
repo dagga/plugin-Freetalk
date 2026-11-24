@@ -1,0 +1,4 @@
+# Windows' Git converts line endings by default, which would break the Gradle wrapper with Bash.
+/gradlew	text eol=lf
+*.bat	text eol=crlf
+*.jar	binary

@@ -17,10 +17,10 @@ jobs:
         # Unfortunately as of 2021-08-05 Debian is not available on GitHub Actions (yet?).
         os: [ubuntu-latest, windows-latest, macos-latest]
         # 8 is $FREENET_MINIMUM_JAVA_VERSION currently.
-        # Unmaintained versions between 8 and 23 have been excluded.
-        # TODO: Code quality: 2024-10-30: Java 23 has been removed because fred doesn't compile
-        # there yet. Try again around March 2025 once Java 24 has been released.
-        java-version: [8, 11, 17, 21]
+        # Unmaintained versions between 8 and 25 have been excluded.
+        # TODO: Code quality: 2026-11-24: 25 was added because Freetalk works with it, but it was not
+        # tested whether fred compiles there. Remove it if fred does not.
+        java-version: [8, 11, 17, 21, 25]
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}, Java ${{ matrix.java-version }}
     
@@ -30,13 +30,12 @@ jobs:
       run: |
         if [ '${{runner.os}}' = 'macOS' ] ; then
             brew install coreutils # For step "Compile and test Freetalk"
-            # The remaining dependencies will be downloaded using Gradle.
         elif [ '${{runner.os}}' = 'Linux' ] ; then
             # TODO: Performance: Check if this is still needed or if they're installed by default
             # on GHA. Also check if we can cache these.
-            sudo apt-get --assume-yes install ant ant-optional junit4 libhamcrest-java
+            sudo apt-get --assume-yes install junit4 libhamcrest-java
         fi
-        # On Windows the dependencies will be downloaded using Gradle.
+        # On macOS and Windows JUnit will be downloaded by Gradle as it isn't at /usr/share there.
     
     - name: Install Java
       uses: actions/setup-java@v2
@@ -130,22 +129,20 @@ jobs:
         # Internet or the local system.
         echo 'Checksums of fred JARs:' ; sha256sum ../fred/build/output/*
         echo 'fred version:'
-        java -classpath '../fred/build/output/freenet.jar' 'freenet.node.Version'
+        # (fred's class Version doesn't have a main() anymore so we cannot run it.)
+        unzip -p '../fred/build/output/freenet.jar' 'META-INF/MANIFEST.MF' \
+          | grep 'Implementation-Version'
         echo 'gradle version:'
-        gradle --version
+        ./gradlew --version
         
-        if [ "${{runner.os}}" != 'Linux' ] ; then
-            # We can't obtain the dependencies from /usr/share so download them instead.
-            export FREETALK__DOWNLOAD_DEPENDENCIES=1
-        fi
-        # To test the Ant and Gradle builders against each other uncomment the following.
-        # (The scripts will use ./gradlew if there is one so we can ensure a specific Gradle version
-        # works if that becomes necessary someday.)
+        # To test the Ant and Gradle builders against each other uncomment the following and add
+        # "ant ant-optional" to the packages which are installed above.
+        # (The scripts will use ./gradlew.)
         ## tools/compare-gradle-jars-with-ant-jars
         ## tools/compare-gradle-tests-with-ant-tests
         # Show stdout/stderr so random seeds of failed tests can be obtained by developers to
         # reproduce failed test runs. Also prevents the 10 minute build timeout.
-        FREETALK__SHOW_GRADLE_TEST_OUTPUT=1 gradle clean test jar
+        FREETALK__SHOW_GRADLE_TEST_OUTPUT=1 ./gradlew clean test jar
 
 # FIXME: Adapt to Freetalk and GitHub Actions (is Travis CI code currently) and enable.
 # Will require adding "python3-pip" to the list of apt packages to install, see above at

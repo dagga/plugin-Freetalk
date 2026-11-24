@@ -1,102 +1,119 @@
 # TODO Freetalk
 
-État au 24 novembre 2026. Le code est sur la branche `modernize` (dernier commit de code : `d44df440`),
-en local et sur le fork `dagga/plugin-Freetalk`. La copie de travail est restée sur `master`.
+State as of 2026-11-25. The code is on branch `modernize` (last code commit: `d44df440`), locally and on
+the fork `dagga/plugin-Freetalk`. The working copy has stayed on `master`.
 
-## En cours : essais sur le nœud local
+## In progress: tests on the local node
 
-Freetalk (`build0013-853-g4687`, même code que `d44df440`) est chargé depuis `dist/Freetalk.jar` et enregistré dans
-`freenet.ini`.
+Freetalk (`build0013-853-g4687`, same code as `d44df440`) is loaded from `dist/Freetalk.jar` and is stored
+in `freenet.ini`.
 
-- [ ] Se connecter sur `http://127.0.0.1:8888/Freetalk/` et vérifier que les identités arrivent. WoT
-      en connaît 4 245 avec le contexte Freetalk, dont 4 140 de score positif ou nul.
-- [ ] Regarder s'il reste de vrais anciens messages sur le réseau (peut prendre des heures ou des jours).
-- [ ] Publier un message de test. **Public** : le premier message ajoute le contexte « Freetalk » à
-      l'identité dans WoT.
-- [ ] Vérifier l'envoi avec les délais normaux (5 à 15 min ou plus avant l'envoi) : jamais prouvé.
-- [ ] Essayer Préférences > « Télécharger les messages des auteurs non liés à la toile de confiance
-      (WoT) ? ». Désactivé par défaut. Une recherche par heure, la première après quelques minutes.
-- [ ] Vérifier que le menu Freetalk apparaît dans l'interface fred-ng.
-- [ ] Surveiller la charge : environ 4 140 abonnements USK de plus.
+- [ ] Log in at `http://127.0.0.1:8888/Freetalk/` and check that the identities arrive. WoT knows 4,245
+      with the Freetalk context, 4,140 of them with a score of zero or more.
+- [ ] See whether real old messages are still on the network (may take hours or days).
+- [ ] Post a test message. **Public**: the first message adds the context "Freetalk" to the identity in WoT.
+- [ ] Check posting with the normal delays (5 to 15 min or more before sending): never proven.
+- [ ] Try Settings > "Download messages of authors which are not linked to the Web of Trust?". Disabled by
+      default. One search per hour, the first one after a few minutes.
+- [ ] Check that the Freetalk menu is shown by the fred-ng interface.
+- [ ] Watch the load: about 4,140 additional USK subscriptions.
 
-### Précautions
+### Precautions
 
-- `./gradlew clean` dans ce dossier supprime `dist/`, donc le JAR que le nœud recharge au démarrage.
-  Un build depuis `master` l'écraserait par une ancienne version. Copier le JAR ailleurs ou construire
-  dans un autre dossier.
-- Ne pas recharger WoT pendant que Freetalk tourne : blocage possible jusqu'à 10 min (voir lot 2).
-- La base est `~/Freenet/Freetalk/Freetalk.db4o`, au format 4. Un JAR de `master` la refusera.
-- Pour revenir en arrière : décharger Freetalk depuis la page Plugins.
+- `./gradlew clean` in this directory deletes `dist/`, and thereby the JAR which the node reloads at
+  startup. A build from `master` would overwrite it with an older version. Copy the JAR elsewhere, or build
+  in another directory.
+- Do not reload WoT while Freetalk is running: it can block for up to 10 min (see lot 2).
+- If WoT or Freetalk is missing after a restart of the node, see "Loading fails at startup" below.
+- The database is `~/Freenet/Freetalk/Freetalk.db4o`, format 4. A JAR of `master` will refuse it.
+- To go back: unload Freetalk on the Plugins page.
 
-## Lot 2 : nouvelle API FCP (3 à 5 jours)
+## Loading fails at startup
 
-- [ ] Remplacer `PluginTalkerBlocking` par `FCPPluginConnection.sendSynchronous()`. Il peut livrer une
-      réponse au mauvais appelant, et attend 10 min si WoT est rechargé (12 threads bloqués, arrêt du
-      nœud en 102 s lors de l'essai).
-- [ ] Passer le serveur FCP de Freetalk de `FredPluginFCP` à `ServerSideFCPMessageHandler`.
+WoT or Freetalk sometimes does not load when the node starts (`NullPointerException` in db4o): 1 of 8
+starts with unmodified Freetalk, too few for a reliable rate. Both share the db4o of `freenet-ext.jar`.
+Nothing in this repository fixes it.
 
-## Lot 3 : notifications WoT (3 à 6 semaines)
+- [ ] Issue: https://github.com/dagga/fred-ng/issues/256 (plugin class loader of fred-ng: options and next
+      steps).
 
-Contacter xor avant de commencer : c'est le chantier annoncé dans son README.
+## Does Freetalk need changes for WoT?
 
-- [ ] Reprendre `FCPClientReferenceImplementation` de WoT, s'abonner à Identities et Scores.
-- [ ] Garder scores et confiances en local (aujourd'hui deux appels FCP bloquants par message affiché).
-- [ ] Mesurer la synchronisation initiale : `Subscribe` ne filtre pas par contexte.
-- [ ] Remplacer l'interrogation horaire de WoT. Dans `GetIdentitiesByScore`, se fier à `Amount` et non à
-      `Identities.Amount`, qui vaut 1.
-- Ne pas fusionner la branche `event-notifications` (2011).
+Unmodified Freetalk (`473222b4`) works with WoT 0.4.5 build0021 on isolated nodes. Only creating a thread by
+FCP failed. Apart from that, see the loading problem above.
 
-## Bugs connus, non corrigés
+- [ ] Draft PR with only that fix: https://github.com/dagga/plugin-Freetalk/pull/1
 
-FCP :
-- [ ] `PutMessage` : `ParentThreadID` n'est pas documenté, et `ParentID` seul crée un nouveau fil sans
-      erreur, alors que le commentaire du code annonce une exception.
-- [ ] `PutMessage` ne peut pas répondre dans un fil dont la racine manque (le web le peut).
-- [ ] `SubscribeToBoard` et `UnsubscribeFromBoard` ne répondent pas en cas de succès.
-- [ ] `ListThreadMessages` échoue sans `ThreadID`, pourtant documenté comme optionnel.
-- [ ] `GetMessage` avec un index inconnu renvoie une description vide.
-- [ ] `FCPInterface.handle()` : `return` manquant après « Plugin is terminated » (lu, non testé).
+## Lot 2: new FCP API (3 to 5 days)
 
-Web et affichage :
-- [ ] GET `/ChangeTrust` et `/IntroduceIdentity` sans `TaskID` : HTTP 500.
-- [ ] La boîte d'envoi montre les messages de toutes les identités locales.
-- [ ] `Quoting.java` : un `[quote author="x"]` écrit à la main, sans `message`, avale du texte.
+- [ ] Replace `PluginTalkerBlocking` by `FCPPluginConnection.sendSynchronous()`. It can deliver a reply to
+      the wrong caller, and waits for 10 min if WoT is reloaded (12 blocked threads, node shutdown in 102 s
+      when tested).
+- [ ] Move the FCP server of Freetalk from `FredPluginFCP` to `ServerSideFCPMessageHandler`.
 
-Autres :
-- [ ] `SubscribedBoard.mDescription` masque `Board.mDescription` : une requête dessus échoue.
-- [ ] `WoTIdentityManager.createOwnIdentity` (avec URI) annule sans relancer l'exception (lu, non testé).
-- [ ] Port NNTP 1199 codé en dur.
-- [ ] À l'arrêt du nœud, erreurs `DatabaseClosedException` si WoT se ferme avant (bruit).
-- [ ] Une réponse datée strictement avant son parent (horloge décalée) s'affiche avant lui.
+## Lot 3: WoT event-notifications (3 to 6 weeks)
 
-Auteurs non liés à WoT :
-- [ ] Leur pseudo est toujours « Unknown ». Il faudrait le lire dans leur XML WoT.
-- [ ] On ne peut pas les noter depuis Freetalk : WoT ne les connaît pas.
-- [ ] La règle d'exclusion n'a été vérifiée que sur nœuds isolés : pas de test unitaire avec de faux
-      échanges WoT. Idem pour l'ajout du contexte au premier message.
+Contact xor before starting: it is the work announced in his README.
 
-## Non vérifié
+- [ ] Use the `FCPClientReferenceImplementation` of WoT, subscribe to Identities and Scores.
+- [ ] Keep scores and trusts locally (currently two blocking FCP calls per displayed message).
+- [ ] Measure the initial synchronization: `Subscribe` does not filter by context.
+- [ ] Replace the hourly polling of WoT. In `GetIdentitiesByScore` rely on `Amount`, not on
+      `Identities.Amount`, which is 1.
+- Do not merge branch `event-notifications` (2011).
 
-- [ ] JDK 8 (aucun disponible ici), Windows, macOS, Eclipse.
-- [ ] CI GitHub : jamais exécutée. Java 25 y a été ajouté sans vérifier que fred y compile.
-- [ ] Échange de messages entre un nœud 1507 et un nœud fred-ng.
-- [ ] Puzzles d'introduction de WoT (aucun disponible pendant les essais).
-- [ ] Comportement sur JDK 26 et plus (db4o écrit dans des champs `final` par réflexion).
+## Known bugs, not fixed
 
-## Plus tard
+FCP:
+- [ ] `PutMessage`: `ParentThreadID` is not documented, and `ParentID` alone creates a new thread without an
+      error, although the comment in the code says that an exception is thrown.
+- [ ] `PutMessage` cannot reply in a thread whose root is missing (the web interface can).
+- [ ] `SubscribeToBoard` and `UnsubscribeFromBoard` send no reply on success.
+- [ ] `ListThreadMessages` fails without `ThreadID`, although it is documented as optional.
+- [ ] `GetMessage` with an unknown index returns an empty description.
+- [ ] `FCPInterface.handle()`: `return` is missing after "Plugin is terminated" (read, not tested).
 
-- Passerelle ou import FMS : mis de côté.
-- Extracteur pour d'anciennes bases `Freetalk.db4o` : seulement s'il en existe une sauvegarde.
-- Remplacer db4o : déconseillé tant que WoT en dépend.
-- Lot 5 : réduire les abonnements USK, moderniser les pages FProxy, API REST pour l'interface fred-ng.
-- Proposer les correctifs en amont, à hyphanet ou à xor : rien n'a été proposé.
+Web and display:
+- [ ] GET `/ChangeTrust` and `/IntroduceIdentity` without `TaskID`: HTTP 500.
+- [ ] The outbox shows the messages of all own identities.
+- [ ] `Quoting.java`: a hand-written `[quote author="x"]` without `message` swallows text.
 
-## Nœuds de test isolés
+Other:
+- [ ] `SubscribedBoard.mDescription` shadows `Board.mDescription`: a query on it fails.
+- [ ] `WoTIdentityManager.createOwnIdentity` (with URIs) rolls back without rethrowing (read, not tested).
+- [ ] NNTP port 1199 is hardcoded.
+- [ ] `DatabaseClosedException` errors at node shutdown if WoT closes first (noise).
+- [ ] A reply dated strictly before its parent (wrong clock) is shown before it.
 
-Scripts et dépendances dans `~/IdeaProjects/freetalk-test-nodes` (voir son `README.md`). Les nœuds sont à
-recréer : les anciens, dans `/tmp`, n'ont pas été gardés.
+Authors not linked to WoT:
+- [ ] Their nickname is always "Unknown". It should be read from their WoT XML.
+- [ ] They cannot be rated from Freetalk: WoT does not know them.
+- [ ] The rule which refuses authors was only checked on isolated nodes: no unit test with a fake WoT. The
+      same applies to adding the context with the first message.
 
-## Après un redémarrage
+## Not verified
 
-Les worktrees des branches sont dans un dossier temporaire de `/tmp`. Les commits sont en sécurité dans
-`.git` (et `modernize` sur le fork). Si `/tmp` a été vidé : `git worktree prune`.
+- [ ] JDK 8 (none available here), Windows, macOS, Eclipse.
+- [ ] GitHub CI: never run. Java 25 was added to it without checking that fred compiles there.
+- [ ] Messages between a 1507 node and a fred-ng node.
+- [ ] Introduction puzzles of WoT (none available during the tests).
+- [ ] JDK 26 and later (db4o writes to `final` fields by reflection).
+
+## Later
+
+- FMS gateway or import: set aside.
+- Extractor for old `Freetalk.db4o` databases: only if a backup exists.
+- Replacing db4o in Freetalk: estimated at 2 to 3 months, H2 preferred. To be decided with lot 3, see the
+  issue above.
+- Lot 5: fewer USK subscriptions, modern FProxy pages, REST API for the fred-ng interface.
+- Propose the fixes upstream, to hyphanet or xor: nothing was proposed yet.
+
+## Isolated test nodes
+
+Scripts and dependencies are in `~/IdeaProjects/freetalk-test-nodes` (see its `README.md`). The nodes have
+to be created again: the old ones, in `/tmp`, were not kept.
+
+## After a restart of the machine
+
+The worktrees of the branches are in a temporary directory in `/tmp`. The commits are safe in `.git` (and
+`modernize` on the fork). If `/tmp` was emptied: `git worktree prune`.

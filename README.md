@@ -71,21 +71,31 @@ You can:
 Clone the [fred](https://github.com/freenet/fred) and plugin-Freetalk repositories into the same
 parent directory.  
 Compile fred by command line using `( cd fred && ./gradlew jar copyRuntimeLibs )`, or for
-compiling it with Eclipse use the [below instructions](#compiling-with-eclipse).
+compiling it with Eclipse use the [below instructions](#compiling-with-eclipse).  
+Compiling Freetalk needs Java 8 or later. If fred was compiled for a more recent Java version than 8
+then Freetalk must be compiled with at least that version as well.
+
+db4o will be downloaded by Git automatically.  
+For the unit tests Gradle uses the JUnit JARs at `/usr/share/java` if they exist there (on Debian
+install `junit4` and `libhamcrest-java`). Otherwise it will download JUnit from Maven Central, and
+verify its checksums. To prohibit this set the environment variable
+`FREETALK__DOWNLOAD_DEPENDENCIES=0`, to always download set it to `1`.
 
 ### Compiling by command line
 
 ```bash
-# With the Ant build script reference implementation:
-ant
-# If you get errors about missing classes check build.xml for whether the JAR locations are correct.
-
 # With the new Gradle builder - it is fully tested against Ant (see tools/) but lacks some features.
 # Its advantages are:
+# - it does not need to be installed.
 # - parallel unit test execution on all available CPU cores.
-# - incremental builds are supported (leave out "clean jar").
-gradle clean jar
-# Wrong JAR locations can be fixed in the file build.gradle
+# - incremental builds are supported (leave out "clean").
+./gradlew clean jar test
+# If fred's JARs are not at ../fred/build/output specify their directory:
+./gradlew -PfredOutput=/path/of/fred/build/output clean jar test
+
+# With the Ant build script reference implementation (needs Ant >= 1.9.8 and the JUnit JARs):
+ant
+# If you get errors about missing classes check build.xml for whether the JAR locations are correct.
 ```
 
 The output `Freetalk.jar` will be in the `dist` directory.  

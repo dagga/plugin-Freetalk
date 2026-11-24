@@ -116,6 +116,10 @@ public final class WoTMessageManager extends MessageManager {
 		Date date = myDate!=null ? myDate : CurrentTimeUTC.get();
 		m = WoTOwnMessage.construct(mFreetalk, (WoTMessageURI)myParentThreadURI, myParentMessage, myBoards, myReplyToBoard, myAuthor, myTitle, date, myText, myAttachments);
 		m.initializeTransient(mFreetalk);
+		
+		// Without the context other users would not download the message. Thus we do this first: If it fails then the message must not be posted.
+		((WoTIdentityManager)mIdentityManager).addFreetalkContext((WoTOwnIdentity)myAuthor);
+		
 		synchronized(this) {
 			m.storeAndCommit();
 		}

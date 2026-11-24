@@ -90,8 +90,7 @@ public class WoTIdentity extends Persistent implements Identity {
 			throw new IllegalStateException(e);
 		}
 		
-		if(mLastReceivedFromWoT < 0)
-			throw new IllegalStateException("mLastReceivedFromWoT == " + mLastReceivedFromWoT);
+		// mLastReceivedFromWoT is a random ID so there is nothing to check about it.
 	}
 	
 

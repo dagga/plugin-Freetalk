@@ -9,6 +9,7 @@ import java.util.Arrays;
 import plugins.Freetalk.Identity;
 import plugins.Freetalk.OwnIdentity;
 import plugins.Freetalk.Persistent.IndexedClass;
+import plugins.Freetalk.exceptions.NoSuchIdentityException;
 import plugins.Freetalk.exceptions.NotInTrustTreeException;
 import plugins.Freetalk.exceptions.NotTrustedException;
 import freenet.keys.FreenetURI;
@@ -92,8 +93,19 @@ public final class WoTOwnIdentity extends WoTIdentity implements OwnIdentity {
 			return getScoreFor((WoTIdentity)identity) >= 0;
 		}
 		catch(NotInTrustTreeException e) {
-			return false;
+			return wantsUnlinkedIdentity((WoTIdentity)identity);
 		}
+		catch(NoSuchIdentityException e) {
+			if(wantsUnlinkedIdentity((WoTIdentity)identity))
+				return true;
+			
+			throw e;
+		}
+	}
+
+	/** Must only be called if WoT does not have a score for the identity. An identity with a negative score must never be wanted. */
+	private boolean wantsUnlinkedIdentity(WoTIdentity identity) {
+		return identity.isUnlinked() && mFreetalk.getIdentityManager().getFetchUnlinkedIdentities();
 	}
 
 	public int getScoreFor(WoTIdentity identity) throws NotInTrustTreeException, Exception {

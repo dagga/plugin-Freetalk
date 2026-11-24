@@ -217,7 +217,7 @@ public class NewReplyPage extends WebPageImpl {
 	private void addRateMessageBox(HTMLNode parent, Byte selectedMessageRating) {
 		Identity identity = mParentMessage.getAuthor();
 
-		if(identity == mOwnIdentity)
+		if(identity == mOwnIdentity || ((WoTIdentity)identity).isUnlinked()) // WoT does not accept trust values for unknown identities
 			return;
 
 		HTMLNode rateMessageBox = getContentBox(l10n().getString(

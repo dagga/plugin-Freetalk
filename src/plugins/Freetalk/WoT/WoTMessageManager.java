@@ -343,7 +343,12 @@ public final class WoTMessageManager extends MessageManager {
 	 */
 	public long getNewMessageListIndexEditionHint(Identity identity) {
 		// TODO: Implement storage of edition hints in message lists.
-		return getUnavailableNewMessageListIndex(identity);
+		final long index = getUnavailableNewMessageListIndex(identity);
+		
+		if(identity instanceof WoTIdentity && ((WoTIdentity)identity).isUnlinked())
+			return Math.max(index, ((WoTIdentity)identity).getMessageListIndexHint());
+		
+		return index;
 	}
 
 

@@ -11,6 +11,8 @@ import com.db4o.ObjectSet;
 import com.db4o.ext.ExtObjectContainer;
 import com.db4o.query.Query;
 
+import plugins.Freetalk.WoT.WoTIdentityManager;
+
 import freenet.support.Logger;
 import freenet.support.codeshortification.IfNull;
 
@@ -46,6 +48,12 @@ public final class Configuration extends Persistent {
 	public static transient final String MINIMUM_TRUSTER_COUNT = "Introduction.MinimumTrusterCount";
 	
 	public static transient final String NNTP_SERVER_ENABLED = "NNTP.ServerEnabled";
+
+	/**
+	 * If true, messages of authors which are not linked to the Web of Trust are downloaded if a message of a regular author refers to them.
+	 * See {@link WoTIdentityManager#setFetchUnlinkedIdentities(boolean)}.
+	 */
+	public static transient final String FETCH_UNLINKED_IDENTITIES = "WebOfTrust.FetchUnlinkedIdentities";
 
 	/** Parameter name for the {@code bindTo} parameter. */
 	public static transient final String NNTP_SERVER_BINDTO = "NNTP.BindTo";
@@ -342,6 +350,10 @@ public final class Configuration extends Persistent {
 		
 		if (!containsBoolean(NNTP_SERVER_ENABLED)) {
 			set(NNTP_SERVER_ENABLED, false);
+		}
+		
+		if(!containsBoolean(FETCH_UNLINKED_IDENTITIES)) {
+			set(FETCH_UNLINKED_IDENTITIES, false);
 		}
 	}
 

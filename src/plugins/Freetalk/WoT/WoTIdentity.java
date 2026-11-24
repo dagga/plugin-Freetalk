@@ -41,13 +41,22 @@ public class WoTIdentity extends Persistent implements Identity {
 	private final String mRequestURI;
 	
 	/** The nickname of this Identity */
-	private final String mNickname;
+	private String mNickname;
 	
 	/**
 	 * Used for garbage collecting old identities which are not returned by the WoT plugin anymore.
 	 * We delete them if their last fetch ID is different to the fetch ID of the current fetch.
 	 */
 	private long mLastReceivedFromWoT;
+	
+	/**
+	 * True if this identity was not received from WoT but discovered because a message refers to a message of it.
+	 * See {@link WoTIdentityManager#setFetchUnlinkedIdentities(boolean)}.
+	 */
+	private boolean mIsUnlinked = false;
+	
+	/** If {@link #mIsUnlinked}, the highest index of the message lists which messages have referred to. */
+	private long mMessageListIndexHint = 0;
 
 
 	// TODO: Remove ID parameter and compute the ID from the URI
@@ -165,6 +174,39 @@ public class WoTIdentity extends Persistent implements Identity {
 			return address.substring(0, maxContentLength+1) + "..."; // "+1" because the "@" does not count as length.
 		}
 		return address;
+	}
+
+	/**
+	 * @return True if this identity was not received from WoT but discovered because a message refers to a message of it.
+	 */
+	public final boolean isUnlinked() {
+		checkedActivate(1); // boolean is a db4o primitive type so 1 is enough
+		return mIsUnlinked;
+	}
+	
+	protected final long getMessageListIndexHint() {
+		checkedActivate(1); // long is a db4o primitive type so 1 is enough
+		return mMessageListIndexHint;
+	}
+	
+	/** Does not store the identity. */
+	protected final synchronized void markAsUnlinked(long messageListIndexHint) {
+		if(this instanceof WoTOwnIdentity)
+			throw new UnsupportedOperationException();
+		
+		checkedActivate(1);
+		mIsUnlinked = true;
+		mMessageListIndexHint = messageListIndexHint;
+	}
+	
+	/**
+	 * Must be called if WoT has returned this unlinked identity. Does not store the identity.
+	 */
+	protected final synchronized void markAsLinked(String nickname) throws InvalidParameterException {
+		validateNickname(nickname);
+		checkedActivate(1);
+		mNickname = nickname;
+		mIsUnlinked = false;
 	}
 
 	public synchronized long getLastReceivedFromWoT() {

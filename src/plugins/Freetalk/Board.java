@@ -464,11 +464,15 @@ public class Board extends Persistent implements Comparable<Board> {
 		return result;
     }
     
+    /**
+     * Returned in ascending order of the index. The {@link SubscribedBoard} relies on that for remembering the highest index it has processed.
+     */
     protected final ObjectSet<DownloadedMessageLink> getDownloadedMessagesAfterIndex(int index) {
         Query q = mDB.query();
         q.constrain(DownloadedMessageLink.class);
         q.descend("mBoard").constrain(this).identity();
         q.descend("mIndex").constrain(index).greater();
+        q.descend("mIndex").orderAscending();
         return new Persistent.InitializingObjectSet<DownloadedMessageLink>(mFreetalk, q.execute());
     }
     
